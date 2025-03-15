@@ -1,7 +1,10 @@
 import openai
 from flask import Flask, request, jsonify,render_template
 import snowflake.connector
+from pandasai import SmartDataframe
+from pandasai.llm import BambooLLM
 import pandas as pd
+import matplotlib.pyplot as plt
 import io
 from langchain_community.chat_models import ChatOpenAI
 import base64
@@ -34,9 +37,10 @@ INSTRUCTIONS: Analyze the database schema and generate the SQL query accordingly
 - FOR STRING HANDLING: Convert strings to lowercase and use LIKE %pattern% for matching.
 - JOIN REQUESTS: Interpret "along" as a request to join tables using valid schema relationships.
 - VALIDATION: If a table or column does not exist, diagnose the error and then give me possible issue and return issue do not use the word "Error"
-- USER QUERY CHECK:When the user asks a question, check if the question is related to the schema. if so 
+- USER QUERY CHECK:When the user asks a question, check if the question is related to the schema.
 - SQL INJECTION: IF user for any sql injection queries return "Permission denied"
-
+- QUERY VALIDATION: Validate the query to ensure it is syntactically correct.
+- ABOUT DATABASE: This is a supermarket database where all tables are linked. If the user does not mention a table name in their query, intelligently determine the most relevant table(s) based on the context before generating the SQL query.
 
 Database Schema:
 Database name:SALES
@@ -188,6 +192,13 @@ WASTAGEWAREHOUSE(ID NUMBER PRIMARY KEY, DATE DATE, PRODUCTCOUNT NUMBER, PREVIOUS
 PURCHASEHOLDREASON (PURCHASEHOLDREASONID NUMBER PRIMARY KEY, REASON TEXT, ISACTIVE BOOLEAN)
 SALESWAREHOUSE (ID NUMBER PRIMARY KEY, BILLDATE DATE, CASH NUMBER, CARD NUMBER, CREDIT NUMBER, ONLINECASH NUMBER, ONLINECARD NUMBER, ONLINEPAYMENT NUMBER, PREPAID NUMBER, BILLCOUNT NUMBER, SALEVALUE NUMBER, SALEQTY NUMBER, GROCERYSALES NUMBER, AVGBILLVALUE NUMBER, RETURNBILLCOUNT NUMBER, TOTALRETURNVALUE NUMBER, RETURNQTY NUMBER, AVGRETURNVALE NUMBER, TOTALSALES NUMBER, PROFIT NUMBER)
 SHELFASSIGN (SHELFASSIGNID NUMBER PRIMARY KEY, SHELFID NUMBER, FLOORNUMBER NUMBER, RACKNUMBER NUMBER, SIZEINSQFEET NUMBER, RENT NUMBER, SUPPLIERID NUMBER, FROMDATE DATE, TODATE TEXT,FOREIGN KEY (SHELFID) REFERENCES SHELF(SHELFID),FOREIGN KEY (SUPPLIERID) REFERENCES SUPPLIER(SUPPLIERID))
+SUPPLIER (SUPPLIERID NUMBER(38,0),SUPPLIERNAME VARCHAR(16777216),SUPPLIERTYPE NUMBER(38,0),ADDRESS1 VARCHAR(16777216),ADDRESS2 VARCHAR(16777216),AREAID NUMBER(38,1),CITYID NUMBER(38,1),STATEID NUMBER(38,1),PINCODE NUMBER(38,1),GSTNUMBER VARCHAR(16777216),PANNUMBER VARCHAR(16777216),MOBILENO NUMBER(38,1),PHONE VARCHAR(16777216),EMAIL VARCHAR(16777216),CONTACTPERSONNAME VARCHAR(16777216),CONTACTPERSONMOBILENO NUMBER(38,1),CREATEDUSERID NUMBER(38,1),CREATEDDATE TIMESTAMP_NTZ(9),MODIFIEDUSERID NUMBER(38,1),MODIFIEDDATE TIMESTAMP_NTZ(9),ISACTIVE BOOLEAN,ISWHOLESALESUPPLIER BOOLEAN,CREDITPERIOD NUMBER(38,0),ISCONSIGNMENTPAYMENT BOOLEAN)
+
+EXAMPLE
+User: provide me the database name
+AI: SELECT CURRENT_DATABASE();
+User: list the tables in our database
+AI: SHOW TABLES;
 """
 # Snowflake Connection Function
 def connect_snowflake():
@@ -200,7 +211,8 @@ def connect_snowflake():
     database='MEC',
     schema='SALES',
     role="ACCOUNTADMIN"
-        )
+
+)
     except Exception as e:
         print(f"Error connecting to Snowflake: {str(e)}")
         return None
@@ -247,107 +259,107 @@ def execute_query():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# @app.route("/get_columns", methods=["GET"])
-# def get_columns():
-#     global columns
-#     """ Fetch the updated column names dynamically. """
-#     columns = columns
-#     return jsonify({"columns": columns})
+@app.route("/get_columns", methods=["GET"])
+def get_columns():
+    global columns
+    """ Fetch the updated column names dynamically. """
+    columns = columns
+    return jsonify({"columns": columns})
 
 
-# @app.route("/generate_chart", methods=["POST"])
-# def generate_chart():
-#     global i,results,columns,rowt
-#     """ Handle chart generation request """
-#     i+=1
-#     data = request.json
-#     chart_type = data.get("chart_type", "bar")  # Default: Bar Chart
-#     num_rows = data.get("num_rows", "All")
-#     print(data,type(num_rows))
-#     df=pd.DataFrame(results, columns=columns)
-#     rowt=len(df)
-#     if num_rows.lower() == "all":
-#         if rowt > 50:
-#             # Display a warning if the number of rows exceeds 50 for any chart type
-#             if chart_type in ["Histogram", "Bar Chart", "Line Chart", "Pie Chart"]:
-#                 return jsonify({"warning": f"{chart_type} cannot display more than 50 rows. Your dataset has {rowt} rows."}), 200    
-#     #ques = f"Visualize the data as a {ques} using {num_rows} rows."
-#     ques = f"Create a {chart_type} using {'all rows' if num_rows.lower() == 'all' else f'the {num_rows} rows'} of the dataset, analyse the data and put a meaningful chart"
+@app.route("/generate_chart", methods=["POST"])
+def generate_chart():
+    global i,results,columns,rowt
+    """ Handle chart generation request """
+    i+=1
+    data = request.json
+    chart_type = data.get("chart_type", "bar")  # Default: Bar Chart
+    num_rows = data.get("num_rows", "All")
+    print(data,type(num_rows))
+    df=pd.DataFrame(results, columns=columns)
+    rowt=len(df)
+    if num_rows.lower() == "all":
+        if rowt > 50:
+            # Display a warning if the number of rows exceeds 50 for any chart type
+            if chart_type in ["Histogram", "Bar Chart", "Line Chart", "Pie Chart"]:
+                return jsonify({"warning": f"{chart_type} cannot display more than 50 rows. Your dataset has {rowt} rows."}), 200    
+    #ques = f"Visualize the data as a {ques} using {num_rows} rows."
+    ques = f"Create a {chart_type} using {'all rows' if num_rows.lower() == 'all' else f'the {num_rows} rows'} of the dataset, analyse the data and put a meaningful chart"
 
-#     df = SmartDataframe(pd.DataFrame(results, columns=columns), config={"llm": llm})
-#     result = df.chat(ques)
+    df = SmartDataframe(pd.DataFrame(results, columns=columns), config={"llm": llm})
+    result = df.chat(ques)
 
-#     if isinstance(result, str):
-#         print("string")
-#         # Check if result is a valid file path
-#         if os.path.isfile(result):
-#             # Define destination path
-#             dest_path = f"static/img/visualization{i}.png"
+    if isinstance(result, str):
+        print("string")
+        # Check if result is a valid file path
+        if os.path.isfile(result):
+            # Define destination path
+            dest_path = f"static/img/visualization{i}.png"
             
-#             # Ensure the static/img directory exists
-#             os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+            # Ensure the static/img directory exists
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
             
-#             # Copy the file to the static directory
-#             shutil.copy(result, dest_path)
+            # Copy the file to the static directory
+            shutil.copy(result, dest_path)
             
-#             print("Saved visualization at:", dest_path)
-#             visualization=dest_path
-#     elif isinstance(result, plt.Figure):
-#         # Define save path
-#         # Save figure to 
-#         image_path=f"static/img/visualization{i}.png"
-#         result.savefig(image_path, format="png")
+            print("Saved visualization at:", dest_path)
+            visualization=dest_path
+    elif isinstance(result, plt.Figure):
+        # Define save path
+        # Save figure to 
+        image_path=f"static/img/visualization{i}.png"
+        result.savefig(image_path, format="png")
 
-#         visualization = image_path  # Store the path instead of Base64
-#     else:
-#         visualization = "Unsupported response type."
+        visualization = image_path  # Store the path instead of Base64
+    else:
+        visualization = "Unsupported response type."
 
 
-#     return jsonify({"status": "success", "visualization": visualization})
+    return jsonify({"status": "success", "visualization": visualization})
 
-# @app.route("/vis", methods=["POST"])
-# def vis():
-#     global results, columns, visualization,i
-#     i+=1
-#     try:
-#         if not results or not columns:
-#             return jsonify({"error": "No data available for visualization"}), 400
+@app.route("/vis", methods=["POST"])
+def vis():
+    global results, columns, visualization,i
+    i+=1
+    try:
+        if not results or not columns:
+            return jsonify({"error": "No data available for visualization"}), 400
 
-#         # Convert results to SmartDataFrame
-#         df = SmartDataframe(pd.DataFrame(results, columns=columns), config={"llm": llm})
-#         result = df.chat("visualise data in efficient way of analysis")
+        # Convert results to SmartDataFrame
+        df = SmartDataframe(pd.DataFrame(results, columns=columns), config={"llm": llm})
+        result = df.chat("visualise data in efficient way of analysis")
 
-#         if isinstance(result, str):
-#             print("string")
+        if isinstance(result, str):
+            print("string")
             
-#             # Check if result is a valid file path
-#             if os.path.isfile(result):
-#                 # Define destination path
-#                 dest_path = f"static/img/visualization{i}.png"
+            # Check if result is a valid file path
+            if os.path.isfile(result):
+                # Define destination path
+                dest_path = f"static/img/visualization{i}.png"
                 
-#                 # Ensure the static/img directory exists
-#                 os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                # Ensure the static/img directory exists
+                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
                 
-#                 # Copy the file to the static directory
-#                 shutil.copy(result, dest_path)
+                # Copy the file to the static directory
+                shutil.copy(result, dest_path)
                 
-#                 print("Saved visualization at:", dest_path)
-#                 visualization=dest_path
-#         elif isinstance(result, plt.Figure):
-#             # Define save path
-#             # Save figure to 
-#             image_path=f"static/img/visualization{i}.png"
-#             result.savefig(image_path, format="png")
+                print("Saved visualization at:", dest_path)
+                visualization=dest_path
+        elif isinstance(result, plt.Figure):
+            # Define save path
+            # Save figure to 
+            image_path=f"static/img/visualization{i}.png"
+            result.savefig(image_path, format="png")
 
-#             visualization = image_path  # Store the path instead of Base64
-#         else:
-#             visualization = "Unsupported response type."
+            visualization = image_path  # Store the path instead of Base64
+        else:
+            visualization = "Unsupported response type."
 
 
-#         return jsonify({"status": "success", "visualization": visualization})
+        return jsonify({"status": "success", "visualization": visualization})
 
-#     except Exception as e:
-#         return jsonify({"error": str(e)}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
     
 @app.route("/generate_sql", methods=["POST"])  
 def generate_sql():
@@ -397,4 +409,5 @@ def clear_history():
     return jsonify({"message": "Chat history cleared"}), 200
 
 if __name__ == "__main__":
-    app.run()
+    port = int(os.environ.get("PORT", 10000))  # Change 10000 to 5000 (default Flask port)
+    app.run(host="0.0.0.0", port=port)
